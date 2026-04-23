@@ -12,10 +12,10 @@ export default function Navbar({ onMenuClick }) {
       flex items-center justify-between px-4 sm:px-6
     ">
 
-      {/* Left: Hamburger + Logo */}
+      
       <div className="flex items-center gap-3">
 
-        {/* Hamburger — mobile only */}
+       
         <button
           onClick={onMenuClick}
           className="lg:hidden text-gray-400 hover:text-white p-2 rounded-lg hover:bg-[#3d1010] transition-all"
