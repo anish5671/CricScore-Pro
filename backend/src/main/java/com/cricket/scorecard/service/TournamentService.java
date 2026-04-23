@@ -8,7 +8,6 @@ import com.cricket.scorecard.repository.TournamentRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import java.util.List;
-
 @Service
 @RequiredArgsConstructor
 public class TournamentService {
@@ -23,7 +22,6 @@ public class TournamentService {
         return tournamentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Tournament not found: " + id));
     }
-
     public Tournament createTournament(TournamentRequest request) {
         Tournament tournament = Tournament.builder()
                 .name(request.getName())
