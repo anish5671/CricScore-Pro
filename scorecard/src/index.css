@@ -1,0 +1,30 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-primary-50:  #fff1f1;
+  --color-primary-100: #ffe0e0;
+  --color-primary-200: #ffc5c5;
+  --color-primary-400: #f87171;
+  --color-primary-500: #e74c3c;
+  --color-primary-600: #c0392b;
+  --color-primary-700: #991b1b;
+  --color-primary-800: #7f1d1d;
+  --color-primary-900: #450a0a;
+
+  --color-dark-bg:      #0a0a0a;
+  --color-dark-card:    #1a0a0a;
+  --color-dark-sidebar: #120808;
+  --color-dark-border:  #3d1010;
+
+  --color-gold:   #fbbf24;
+  --color-six:    #22c55e;
+  --color-wicket: #ef4444;
+  --color-live:   #ff4444;
+
+  --color-cricket-green: #15803d;
+  --color-cricket-pitch: #92400e;
+  --color-cricket-ball:  #dc2626;
+
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
