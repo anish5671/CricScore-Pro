@@ -20,7 +20,6 @@ export default function LiveMatchPage() {
 
   useEffect(() => {
     fetchLiveScore()
-    // Auto refresh every 5 seconds
     const interval = setInterval(fetchLiveScore, 5000)
     return () => clearInterval(interval)
   }, [id])
