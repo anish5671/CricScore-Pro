@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { STORAGE_KEYS, RUN_OPTIONS, DISMISSAL_TYPES } from '../utils/constants'
+import { useAuth } from '../context/AuthContext'
 
 export default function LiveScoringPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { isAdmin, isScorer } = useAuth()
+
   const [match, setMatch] = useState(null)
   const [innings, setInnings] = useState(null)
   const [players, setPlayers] = useState([])
@@ -12,9 +15,11 @@ export default function LiveScoringPage() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
+  const [overComplete, setOverComplete] = useState(false)
 
   const [delivery, setDelivery] = useState({
     batsmanId: '',
+    nonStrikerId: '',
     bowlerId: '',
     runs: 0,
     isWicket: false,
@@ -27,27 +32,28 @@ export default function LiveScoringPage() {
 
   const token = localStorage.getItem(STORAGE_KEYS.TOKEN)
   const headers = { 'Authorization': `Bearer ${token}` }
+  const canScore = isAdmin() || isScorer()
 
-  // Fetch live score
   const fetchLiveScore = useCallback(() => {
     fetch(`http://localhost:8080/api/matches/${id}/live`, { headers })
       .then(r => r.json())
       .then(data => {
-        if (!data.error) setLiveScore(data)
+        if (!data.error) {
+          setLiveScore(data)
+          if ((data?.totalBalls ?? 0) > 0 && data.totalBalls % 6 === 0) {
+            setOverComplete(true)
+          }
+        }
       })
       .catch(() => {})
   }, [id])
 
-  // Fetch existing innings from backend on page load
   const fetchExistingInnings = useCallback(async () => {
     try {
       const res = await fetch(`http://localhost:8080/api/matches/${id}/innings/1`, { headers })
       if (res.ok) {
         const data = await res.json()
-        if (data && data.id) {
-          setInnings(data)
-          return true
-        }
+        if (data?.id) { setInnings(data); return true }
       }
     } catch (e) {}
     return false
@@ -56,29 +62,23 @@ export default function LiveScoringPage() {
   useEffect(() => {
     const init = async () => {
       try {
-        // Fetch match
         const matchRes = await fetch(`http://localhost:8080/api/matches/${id}`, { headers })
         const matchData = await matchRes.json()
         setMatch(matchData)
 
-        // Fetch players
         const playersRes = await fetch(`http://localhost:8080/api/matches/${id}/players`, { headers })
         const playersData = await playersRes.json()
 
-        if (playersData && playersData.length > 0) {
+        if (playersData?.length > 0) {
           setPlayers(playersData)
         } else {
-          // Fallback — fetch all players from both teams
           const [t1, t2] = await Promise.all([
             fetch(`http://localhost:8080/api/players/team/${matchData.team1Id}`, { headers }).then(r => r.json()),
             fetch(`http://localhost:8080/api/players/team/${matchData.team2Id}`, { headers }).then(r => r.json()),
           ])
           setPlayers([...t1, ...t2])
         }
-
-        // Check if innings already exists
         await fetchExistingInnings()
-
       } catch (e) {
         console.error(e)
       } finally {
@@ -88,7 +88,6 @@ export default function LiveScoringPage() {
     init()
   }, [id])
 
-  // Auto refresh live score every 3 seconds when innings exists
   useEffect(() => {
     if (!innings) return
     fetchLiveScore()
@@ -109,7 +108,7 @@ export default function LiveScoringPage() {
     }
   }
 
-  const resetDelivery = () => {
+  const resetDelivery = (keepBowler = false) => {
     setDelivery(prev => ({
       ...prev,
       runs: 0,
@@ -119,14 +118,23 @@ export default function LiveScoringPage() {
       isNoBall: false,
       isBye: false,
       extraRuns: 0,
+      bowlerId: keepBowler ? prev.bowlerId : '',
     }))
   }
 
-  const addDelivery = async () => {
-    if (!delivery.batsmanId || !delivery.bowlerId) {
-      setMessage('Please select batsman and bowler!')
-      return
-    }
+  const swapBatsmen = () => {
+    setDelivery(prev => ({
+      ...prev,
+      batsmanId: prev.nonStrikerId,
+      nonStrikerId: prev.batsmanId,
+    }))
+  }
+
+  const handleAddDelivery = async () => {
+    if (!canScore) { setMessage('You do not have permission to score!'); return }
+    if (!delivery.batsmanId || !delivery.bowlerId) { setMessage('Please select batsman and bowler!'); return }
+    if (overComplete) { setMessage('Over complete! Please select new bowler first!'); return }
+
     setSubmitting(true)
     setMessage('')
 
@@ -152,20 +160,31 @@ export default function LiveScoringPage() {
       )
 
       if (response.ok) {
-        // Immediately fetch updated live score
         fetchLiveScore()
 
-        let summary = ''
-        if (delivery.isWide)          summary = 'Wide! +1 run'
-        else if (delivery.isNoBall)   summary = `No Ball! +1 run`
-        else if (delivery.isWicket)   summary = `WICKET!`
-        else if (delivery.runs === 6) summary = 'SIX! 🎉'
-        else if (delivery.runs === 4) summary = 'FOUR! 🏏'
-        else                          summary = `${delivery.runs} run(s) added`
+        const totalRuns = delivery.runs + delivery.extraRuns
+        if (!delivery.isWide && !delivery.isNoBall && totalRuns % 2 !== 0) {
+          swapBatsmen()
+        }
 
-        setMessage(summary)
-        resetDelivery()
-        setTimeout(() => setMessage(''), 2000)
+        const newBalls = ((liveScore?.totalBalls ?? 0)) + ((!delivery.isWide && !delivery.isNoBall) ? 1 : 0)
+        if (newBalls > 0 && newBalls % 6 === 0) {
+          setOverComplete(true)
+          setMessage('Over complete! Select new bowler!')
+          swapBatsmen()
+          resetDelivery(false)
+        } else {
+          let summary = ''
+          if (delivery.isWide)          summary = 'Wide! +1 run'
+          else if (delivery.isNoBall)   summary = 'No Ball! +1 run'
+          else if (delivery.isWicket)   summary = 'WICKET!'
+          else if (delivery.runs === 6) summary = 'SIX! 🎉'
+          else if (delivery.runs === 4) summary = 'FOUR! 🏏'
+          else                          summary = `${delivery.runs} run(s) added`
+          setMessage(summary)
+          resetDelivery(true)
+          setTimeout(() => setMessage(''), 2000)
+        }
       } else {
         const err = await response.json()
         setMessage(err.error || 'Error adding delivery')
@@ -196,12 +215,8 @@ export default function LiveScoringPage() {
   return (
     <div className="space-y-4 pb-10">
 
-      {/* Header */}
       <div className="flex items-center justify-between">
-        <button onClick={() => navigate('/matches')}
-          className="text-gray-500 hover:text-white text-sm transition-all">
-          ← Back
-        </button>
+        <button onClick={() => navigate('/matches')} className="text-gray-500 hover:text-white text-sm">← Back</button>
         <h1 className="text-white font-bold text-lg">Live Scoring</h1>
         <span className="flex items-center gap-1.5 text-[#ff4444] text-xs font-bold">
           <span className="w-2 h-2 rounded-full bg-[#ff4444] animate-pulse"></span>
@@ -209,7 +224,6 @@ export default function LiveScoringPage() {
         </span>
       </div>
 
-      {/* Match info */}
       {match && (
         <div className="bg-[#1a0a0a] border border-[#3d1010] rounded-xl p-4 text-center">
           <p className="text-white font-bold text-lg">{match.team1Name} vs {match.team2Name}</p>
@@ -219,26 +233,26 @@ export default function LiveScoringPage() {
         </div>
       )}
 
-      {/* Start innings — only show if no innings exists */}
-      {!innings && match && (
+      {!innings && match && canScore && (
         <div className="bg-[#1a0a0a] border border-[#3d1010] rounded-xl p-6 space-y-4">
           <p className="text-white font-semibold text-center">Who bats first?</p>
-          <button
-            onClick={() => startInnings(match.team1Id, match.team2Id, 1)}
-            className="w-full py-3 bg-[#c0392b] hover:bg-[#e74c3c] text-white rounded-xl font-semibold transition-all active:scale-95"
-          >
+          <button onClick={() => startInnings(match.team1Id, match.team2Id, 1)}
+            className="w-full py-3 bg-[#c0392b] hover:bg-[#e74c3c] text-white rounded-xl font-semibold transition-all">
             {match.team1Name} bats first
           </button>
-          <button
-            onClick={() => startInnings(match.team2Id, match.team1Id, 1)}
-            className="w-full py-3 bg-[#0a0a0a] border border-[#3d1010] hover:border-[#c0392b] text-white rounded-xl font-semibold transition-all"
-          >
+          <button onClick={() => startInnings(match.team2Id, match.team1Id, 1)}
+            className="w-full py-3 bg-[#0a0a0a] border border-[#3d1010] hover:border-[#c0392b] text-white rounded-xl font-semibold transition-all">
             {match.team2Name} bats first
           </button>
         </div>
       )}
 
-      {/* Live score */}
+      {!canScore && (
+        <div className="bg-red-900/30 border border-red-800 rounded-xl p-4 text-center">
+          <p className="text-red-400 text-sm font-medium">Viewers cannot score matches</p>
+        </div>
+      )}
+
       {liveScore && innings && (
         <div className="bg-[#1a0a0a] border border-[#3d1010] rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
@@ -264,7 +278,7 @@ export default function LiveScoringPage() {
                 {liveScore.currentOver.map((ball, i) => {
                   const { label, color } = getBallDisplay(ball)
                   return (
-                    <div key={i}
+                    <div key={`ball-${i}-${label}`}
                       className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold ${color}`}>
                       {label}
                     </div>
@@ -276,14 +290,21 @@ export default function LiveScoringPage() {
         </div>
       )}
 
-      {/* Scoring panel */}
-      {innings && (
+      {innings && canScore && (
         <div className="bg-[#1a0a0a] border border-[#3d1010] rounded-xl p-5 space-y-5">
           <h2 className="text-white font-semibold">Add Delivery</h2>
 
+          {overComplete && (
+            <div className="bg-[#fbbf24]/20 border border-[#fbbf24] rounded-lg px-4 py-3">
+              <p className="text-[#fbbf24] text-sm font-medium text-center">
+                Over complete! Select new bowler to continue
+              </p>
+            </div>
+          )}
+
           {message && (
             <div className={`px-4 py-2 rounded-lg text-sm font-medium text-center ${
-              message.includes('Error') || message.includes('Please')
+              message.includes('Error') || message.includes('Please') || message.includes('permission')
                 ? 'bg-red-900/30 text-red-400'
                 : 'bg-green-900/30 text-[#22c55e]'
             }`}>
@@ -291,33 +312,52 @@ export default function LiveScoringPage() {
             </div>
           )}
 
-          {/* Batsman */}
           <div>
-            <label className="block text-gray-400 text-xs font-medium mb-1.5">Batsman *</label>
-            <select
-              value={delivery.batsmanId}
+            <label htmlFor="striker" className="block text-gray-400 text-xs font-medium mb-1.5">
+              Striker (batting) *
+            </label>
+            <select id="striker" value={delivery.batsmanId}
               onChange={e => setDelivery({ ...delivery, batsmanId: e.target.value })}
-              className="w-full px-3 py-2.5 rounded-lg text-sm bg-[#0a0a0a] border border-[#3d1010] text-white focus:outline-none focus:border-[#c0392b]"
-            >
-              <option value="">Select Batsman</option>
+              className="w-full px-3 py-2.5 rounded-lg text-sm bg-[#0a0a0a] border border-[#3d1010] text-white focus:outline-none focus:border-[#c0392b]">
+              <option value="">Select Striker</option>
               {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
 
-          {/* Bowler */}
           <div>
-            <label className="block text-gray-400 text-xs font-medium mb-1.5">Bowler *</label>
-            <select
-              value={delivery.bowlerId}
-              onChange={e => setDelivery({ ...delivery, bowlerId: e.target.value })}
-              className="w-full px-3 py-2.5 rounded-lg text-sm bg-[#0a0a0a] border border-[#3d1010] text-white focus:outline-none focus:border-[#c0392b]"
-            >
+            <label htmlFor="nonStriker" className="block text-gray-400 text-xs font-medium mb-1.5">
+              Non-Striker
+            </label>
+            <select id="nonStriker" value={delivery.nonStrikerId}
+              onChange={e => setDelivery({ ...delivery, nonStrikerId: e.target.value })}
+              className="w-full px-3 py-2.5 rounded-lg text-sm bg-[#0a0a0a] border border-[#3d1010] text-white focus:outline-none focus:border-[#c0392b]">
+              <option value="">Select Non-Striker</option>
+              {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+
+          <button type="button" onClick={swapBatsmen}
+            className="w-full py-2 rounded-lg text-xs font-medium bg-[#0a0a0a] border border-[#3d1010] text-gray-400 hover:text-white transition-all">
+            ⇄ Swap Striker / Non-Striker
+          </button>
+
+          <div>
+            <label htmlFor="bowler" className="block text-gray-400 text-xs font-medium mb-1.5">
+              Bowler * {overComplete && <span className="text-[#fbbf24]">(Change bowler!)</span>}
+            </label>
+            <select id="bowler" value={delivery.bowlerId}
+              onChange={e => {
+                setDelivery({ ...delivery, bowlerId: e.target.value })
+                setOverComplete(false)
+              }}
+              className={`w-full px-3 py-2.5 rounded-lg text-sm bg-[#0a0a0a] text-white focus:outline-none transition-all ${
+                overComplete ? 'border-2 border-[#fbbf24]' : 'border border-[#3d1010] focus:border-[#c0392b]'
+              }`}>
               <option value="">Select Bowler</option>
               {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
 
-          {/* Runs */}
           <div>
             <label className="block text-gray-400 text-xs font-medium mb-2">Runs scored</label>
             <div className="flex gap-2">
@@ -330,15 +370,13 @@ export default function LiveScoringPage() {
                         : run === 6 ? 'bg-[#22c55e] text-white border-2 border-[#22c55e]'
                         : 'bg-[#c0392b] text-white border-2 border-[#c0392b]'
                       : 'bg-[#0a0a0a] border-2 border-[#3d1010] text-gray-400 hover:border-[#c0392b] hover:text-white'
-                  }`}
-                >
+                  }`}>
                   {run}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Delivery type */}
           <div>
             <label className="block text-gray-400 text-xs font-medium mb-2">Delivery type</label>
             <div className="grid grid-cols-2 gap-2">
@@ -373,20 +411,15 @@ export default function LiveScoringPage() {
             </div>
           </div>
 
-          {/* Extra runs */}
           {(delivery.isWide || delivery.isNoBall || delivery.isBye) && (
             <div>
-              <label className="block text-gray-400 text-xs font-medium mb-1.5">
-                Extra runs
-              </label>
+              <label className="block text-gray-400 text-xs font-medium mb-1.5">Extra runs</label>
               <div className="flex gap-2">
                 {[0,1,2,3,4].map(r => (
                   <button key={r} type="button"
                     onClick={() => setDelivery({ ...delivery, extraRuns: r })}
                     className={`w-10 h-10 rounded-full text-sm font-bold transition-all ${
-                      delivery.extraRuns === r
-                        ? 'bg-[#fbbf24] text-black'
-                        : 'bg-[#0a0a0a] border border-[#3d1010] text-gray-400 hover:text-white'
+                      delivery.extraRuns === r ? 'bg-[#fbbf24] text-black' : 'bg-[#0a0a0a] border border-[#3d1010] text-gray-400 hover:text-white'
                     }`}>
                     {r}
                   </button>
@@ -395,15 +428,12 @@ export default function LiveScoringPage() {
             </div>
           )}
 
-          {/* Wicket type */}
           {delivery.isWicket && (
             <div>
-              <label className="block text-gray-400 text-xs font-medium mb-1.5">Dismissal Type</label>
-              <select
-                value={delivery.dismissalType}
+              <label htmlFor="dismissal" className="block text-gray-400 text-xs font-medium mb-1.5">Dismissal Type</label>
+              <select id="dismissal" value={delivery.dismissalType}
                 onChange={e => setDelivery({ ...delivery, dismissalType: e.target.value })}
-                className="w-full px-3 py-2.5 rounded-lg text-sm bg-[#0a0a0a] border border-[#3d1010] text-white focus:outline-none focus:border-[#c0392b]"
-              >
+                className="w-full px-3 py-2.5 rounded-lg text-sm bg-[#0a0a0a] border border-[#3d1010] text-white focus:outline-none focus:border-[#c0392b]">
                 <option value="">Select dismissal type</option>
                 {DISMISSAL_TYPES.filter(d => d.value !== 'NOT_OUT').map(d => (
                   <option key={d.value} value={d.value}>{d.label}</option>
@@ -412,7 +442,6 @@ export default function LiveScoringPage() {
             </div>
           )}
 
-          {/* Preview */}
           <div className="bg-[#0a0a0a] rounded-lg p-3 text-xs text-gray-500">
             <span className="text-gray-400 font-medium">Preview: </span>
             {delivery.isWide && <span className="text-[#f97316]">Wide </span>}
@@ -427,13 +456,9 @@ export default function LiveScoringPage() {
             }
           </div>
 
-          {/* Submit */}
-          <button
-            onClick={addDelivery}
-            disabled={submitting}
-            className="w-full py-3 bg-[#c0392b] hover:bg-[#e74c3c] text-white rounded-xl font-semibold text-lg transition-all disabled:opacity-50 active:scale-95"
-          >
-            {submitting ? 'Adding...' : 'Add Ball ✓'}
+          <button onClick={handleAddDelivery} disabled={submitting || overComplete}
+            className="w-full py-3 bg-[#c0392b] hover:bg-[#e74c3c] text-white rounded-xl font-semibold text-lg transition-all disabled:opacity-50 active:scale-95">
+            {submitting ? 'Adding...' : overComplete ? 'Select new bowler first!' : 'Add Ball ✓'}
           </button>
 
         </div>
