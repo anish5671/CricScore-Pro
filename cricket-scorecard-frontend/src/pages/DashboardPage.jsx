@@ -46,7 +46,7 @@ export default function DashboardPage() {
 
       <div>
         <h1 className="text-white text-2xl font-bold">Dashboard</h1>
-        <p className="text-gray-500 text-sm mt-1">Welcome back!</p>
+        <p className="text-gray-500 text-sm mt-1">WELCOME BACK!</p>
       </div>
 
       {/* Stats */}

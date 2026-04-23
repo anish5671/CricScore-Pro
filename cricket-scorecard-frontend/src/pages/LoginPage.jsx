@@ -67,7 +67,7 @@ export default function LoginPage() {
             <span className="text-white text-2xl font-bold">C</span>
           </div>
           <h1 className="text-white text-2xl font-bold">CricScore</h1>
-          <p className="text-gray-500 text-sm mt-1">Smart Cricket Scorecard System</p>
+          <p className="text-gray-500 text-sm mt-1">Smart Cricket Scorecard Manager</p>
         </div>
 
         {/* Form */}

@@ -34,7 +34,7 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
 
       <div>
-        <h1 className="text-white text-2xl font-bold">Analytics</h1>
+        <h1 className="text-white text-2xl font-bold">Broad Analysis</h1>
         <p className="text-gray-500 text-sm mt-1">Performance insights</p>
       </div>
 
