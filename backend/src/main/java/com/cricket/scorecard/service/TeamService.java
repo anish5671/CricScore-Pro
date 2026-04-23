@@ -1,5 +1,4 @@
 package com.cricket.scorecard.service;
-
 import com.cricket.scorecard.dto.request.TeamRequest;
 import com.cricket.scorecard.entity.Team;
 import com.cricket.scorecard.exception.ResourceNotFoundException;
@@ -7,7 +6,6 @@ import com.cricket.scorecard.repository.TeamRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import java.util.List;
-
 @Service
 @RequiredArgsConstructor
 public class TeamService {
@@ -41,7 +39,6 @@ public class TeamService {
         team.setHomeGround(request.getHomeGround());
         return teamRepository.save(team);
     }
-
     public void deleteTeam(Long id) {
         teamRepository.deleteById(id);
     }
