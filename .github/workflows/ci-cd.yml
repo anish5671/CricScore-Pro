@@ -20,8 +20,14 @@ jobs:
           distribution: 'temurin'
       - name: Build and test backend
         run: |
-          cd scorecard
-          mvn clean test -Dspring.datasource.url=jdbc:h2:mem:testdb -Dspring.datasource.driver-class-name=org.h2.Driver -Dspring.datasource.username=sa -Dspring.datasource.password= -Dspring.jpa.hibernate.ddl-auto=create-drop -Dspring.flyway.enabled=false
+          cd backend
+          mvn clean test \
+            -Dspring.datasource.url=jdbc:h2:mem:testdb \
+            -Dspring.datasource.driver-class-name=org.h2.Driver \
+            -Dspring.datasource.username=sa \
+            -Dspring.datasource.password= \
+            -Dspring.jpa.hibernate.ddl-auto=create-drop \
+            -Dspring.flyway.enabled=false
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -33,6 +39,7 @@ jobs:
           node-version: '20'
       - name: Install and build
         run: |
+          cd cricket-scorecard-frontend
           npm install
           npm run build
 
@@ -41,10 +48,20 @@ jobs:
     needs: [backend-test, frontend-build]
     steps:
       - uses: actions/checkout@v3
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
       - name: Build backend Docker image
         run: |
-          cd scorecard
+          cd backend
           mvn clean package -DskipTests
           docker build -t cricket-backend:latest .
+
       - name: Build frontend Docker image
-        run: docker build -t cricket-frontend:latest .
+        run: |
+          cd cricket-scorecard-frontend
+          docker build -t cricket-frontend:latest .
