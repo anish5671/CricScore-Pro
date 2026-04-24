@@ -10,12 +10,14 @@ export default function LiveScoringPage() {
 
   const [match, setMatch] = useState(null)
   const [innings, setInnings] = useState(null)
-  const [players, setPlayers] = useState([])
+  const [battingPlayers, setBattingPlayers] = useState([])
+  const [bowlingPlayers, setBowlingPlayers] = useState([])
   const [liveScore, setLiveScore] = useState(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   const [overComplete, setOverComplete] = useState(false)
+  const [inningsStarting, setInningsStarting] = useState(false)
 
   const [delivery, setDelivery] = useState({
     batsmanId: '',
@@ -48,15 +50,19 @@ export default function LiveScoringPage() {
       .catch(() => {})
   }, [id])
 
-  const fetchExistingInnings = useCallback(async () => {
+  const loadPlayers = useCallback(async (matchData, inningsData) => {
     try {
-      const res = await fetch(`http://localhost:8080/api/matches/${id}/innings/1`, { headers })
-      if (res.ok) {
-        const data = await res.json()
-        if (data?.id) { setInnings(data); return true }
-      }
+      // Try playing 11 first
+      const battingTeamId = inningsData.battingTeamId || matchData.team1Id
+      const bowlingTeamId = inningsData.bowlingTeamId || matchData.team2Id
+
+      const [bp, bowlp] = await Promise.all([
+        fetch(`http://localhost:8080/api/players/team/${battingTeamId}`, { headers }).then(r => r.json()),
+        fetch(`http://localhost:8080/api/players/team/${bowlingTeamId}`, { headers }).then(r => r.json()),
+      ])
+      setBattingPlayers(Array.isArray(bp) ? bp : [])
+      setBowlingPlayers(Array.isArray(bowlp) ? bowlp : [])
     } catch (e) {}
-    return false
   }, [id])
 
   useEffect(() => {
@@ -66,19 +72,24 @@ export default function LiveScoringPage() {
         const matchData = await matchRes.json()
         setMatch(matchData)
 
-        const playersRes = await fetch(`http://localhost:8080/api/matches/${id}/players`, { headers })
-        const playersData = await playersRes.json()
-
-        if (playersData?.length > 0) {
-          setPlayers(playersData)
-        } else {
-          const [t1, t2] = await Promise.all([
-            fetch(`http://localhost:8080/api/players/team/${matchData.team1Id}`, { headers }).then(r => r.json()),
-            fetch(`http://localhost:8080/api/players/team/${matchData.team2Id}`, { headers }).then(r => r.json()),
-          ])
-          setPlayers([...t1, ...t2])
+        // Check existing innings
+        try {
+          const inningsRes = await fetch(`http://localhost:8080/api/matches/${id}/innings/1`, { headers })
+          if (inningsRes.ok) {
+            const inningsData = await inningsRes.json()
+            if (inningsData?.id) {
+              setInnings(inningsData)
+              await loadPlayers(matchData, inningsData)
+            } else {
+              // Auto start innings based on toss
+              await autoStartInnings(matchData)
+            }
+          } else {
+            await autoStartInnings(matchData)
+          }
+        } catch (e) {
+          await autoStartInnings(matchData)
         }
-        await fetchExistingInnings()
       } catch (e) {
         console.error(e)
       } finally {
@@ -88,25 +99,47 @@ export default function LiveScoringPage() {
     init()
   }, [id])
 
+  const autoStartInnings = async (matchData) => {
+    if (!matchData || inningsStarting) return
+    setInningsStarting(true)
+    try {
+      // Toss winner decides who bats
+      let battingTeamId = matchData.team1Id
+      let bowlingTeamId = matchData.team2Id
+
+      if (matchData.tossWinner && matchData.tossDecision) {
+        const tossWinnerIsteam1 = matchData.team1Name === matchData.tossWinner
+        if (matchData.tossDecision === 'BAT') {
+          battingTeamId = tossWinnerIsteam1 ? matchData.team1Id : matchData.team2Id
+          bowlingTeamId = tossWinnerIsteam1 ? matchData.team2Id : matchData.team1Id
+        } else {
+          battingTeamId = tossWinnerIsteam1 ? matchData.team2Id : matchData.team1Id
+          bowlingTeamId = tossWinnerIsteam1 ? matchData.team1Id : matchData.team2Id
+        }
+      }
+
+      const response = await fetch(
+        `http://localhost:8080/api/matches/${id}/innings/start?battingTeamId=${battingTeamId}&bowlingTeamId=${bowlingTeamId}&inningsNumber=1`,
+        { method: 'POST', headers }
+      )
+      if (response.ok) {
+        const data = await response.json()
+        setInnings(data)
+        await loadPlayers(matchData, { battingTeamId, bowlingTeamId })
+      }
+    } catch (e) {
+      setMessage('Error starting innings')
+    } finally {
+      setInningsStarting(false)
+    }
+  }
+
   useEffect(() => {
     if (!innings) return
     fetchLiveScore()
     const interval = setInterval(fetchLiveScore, 3000)
     return () => clearInterval(interval)
   }, [innings, fetchLiveScore])
-
-  const startInnings = async (battingTeamId, bowlingTeamId, inningsNumber) => {
-    try {
-      const response = await fetch(
-        `http://localhost:8080/api/matches/${id}/innings/start?battingTeamId=${battingTeamId}&bowlingTeamId=${bowlingTeamId}&inningsNumber=${inningsNumber}`,
-        { method: 'POST', headers }
-      )
-      const data = await response.json()
-      setInnings(data)
-    } catch (e) {
-      setMessage('Error starting innings')
-    }
-  }
 
   const resetDelivery = (keepBowler = false) => {
     setDelivery(prev => ({
@@ -206,9 +239,12 @@ export default function LiveScoringPage() {
     return { label: String(ball), color: 'bg-[#1a0a0a] border border-[#3d1010] text-gray-300' }
   }
 
-  if (loading) return (
+  if (loading || inningsStarting) return (
     <div className="flex items-center justify-center h-64">
       <div className="w-8 h-8 border-2 border-[#c0392b] border-t-transparent rounded-full animate-spin"></div>
+      <p className="text-gray-400 text-sm ml-3">
+        {inningsStarting ? 'Starting innings...' : 'Loading...'}
+      </p>
     </div>
   )
 
@@ -230,20 +266,11 @@ export default function LiveScoringPage() {
           <p className="text-gray-500 text-xs mt-1">
             {match.format === 'LOCAL_CUSTOM' ? `Local (${match.customOvers} ov)` : match.format}
           </p>
-        </div>
-      )}
-
-      {!innings && match && canScore && (
-        <div className="bg-[#1a0a0a] border border-[#3d1010] rounded-xl p-6 space-y-4">
-          <p className="text-white font-semibold text-center">Who bats first?</p>
-          <button onClick={() => startInnings(match.team1Id, match.team2Id, 1)}
-            className="w-full py-3 bg-[#c0392b] hover:bg-[#e74c3c] text-white rounded-xl font-semibold transition-all">
-            {match.team1Name} bats first
-          </button>
-          <button onClick={() => startInnings(match.team2Id, match.team1Id, 1)}
-            className="w-full py-3 bg-[#0a0a0a] border border-[#3d1010] hover:border-[#c0392b] text-white rounded-xl font-semibold transition-all">
-            {match.team2Name} bats first
-          </button>
+          {match.tossWinner && (
+            <p className="text-gray-600 text-xs mt-1">
+              {match.tossWinner} won toss — elected to {match.tossDecision === 'BAT' ? 'bat' : 'bowl'}
+            </p>
+          )}
         </div>
       )}
 
@@ -312,6 +339,7 @@ export default function LiveScoringPage() {
             </div>
           )}
 
+          {/* Striker — only batting team */}
           <div>
             <label htmlFor="striker" className="block text-gray-400 text-xs font-medium mb-1.5">
               Striker (batting) *
@@ -320,10 +348,11 @@ export default function LiveScoringPage() {
               onChange={e => setDelivery({ ...delivery, batsmanId: e.target.value })}
               className="w-full px-3 py-2.5 rounded-lg text-sm bg-[#0a0a0a] border border-[#3d1010] text-white focus:outline-none focus:border-[#c0392b]">
               <option value="">Select Striker</option>
-              {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {battingPlayers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
 
+          {/* Non striker — only batting team */}
           <div>
             <label htmlFor="nonStriker" className="block text-gray-400 text-xs font-medium mb-1.5">
               Non-Striker
@@ -332,7 +361,7 @@ export default function LiveScoringPage() {
               onChange={e => setDelivery({ ...delivery, nonStrikerId: e.target.value })}
               className="w-full px-3 py-2.5 rounded-lg text-sm bg-[#0a0a0a] border border-[#3d1010] text-white focus:outline-none focus:border-[#c0392b]">
               <option value="">Select Non-Striker</option>
-              {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {battingPlayers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
 
@@ -341,6 +370,7 @@ export default function LiveScoringPage() {
             ⇄ Swap Striker / Non-Striker
           </button>
 
+          {/* Bowler — only bowling team */}
           <div>
             <label htmlFor="bowler" className="block text-gray-400 text-xs font-medium mb-1.5">
               Bowler * {overComplete && <span className="text-[#fbbf24]">(Change bowler!)</span>}
@@ -354,7 +384,7 @@ export default function LiveScoringPage() {
                 overComplete ? 'border-2 border-[#fbbf24]' : 'border border-[#3d1010] focus:border-[#c0392b]'
               }`}>
               <option value="">Select Bowler</option>
-              {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {bowlingPlayers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
 
